@@ -1,0 +1,100 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    ports:
+      - "${RABBITMQ_PORT}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "${MAILHOG_SMTP_PORT}:1025"
+      - "${MAILHOG_UI_PORT}:8025"
+
+  api:
+    build:
+      context: .
+      args:
+        DATABASE_URL: ${DOCKER_DATABASE_URL}
+        PORT: ${PORT}
+    environment:
+      NODE_ENV: ${DOCKER_NODE_ENV}
+      PORT: ${PORT}
+      DATABASE_URL: ${DOCKER_DATABASE_URL}
+      RABBITMQ_URL: ${DOCKER_RABBITMQ_URL}
+      RABBITMQ_CUSTOMERS_EXCHANGE: ${RABBITMQ_CUSTOMERS_EXCHANGE}
+      RABBITMQ_CUSTOMER_CREATED_ROUTING_KEY: ${RABBITMQ_CUSTOMER_CREATED_ROUTING_KEY}
+      OUTBOX_PUBLISH_INTERVAL_MS: ${OUTBOX_PUBLISH_INTERVAL_MS}
+      OUTBOX_PUBLISH_BATCH_SIZE: ${OUTBOX_PUBLISH_BATCH_SIZE}
+      OUTBOX_RETRY_DELAY_MS: ${OUTBOX_RETRY_DELAY_MS}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS}
+      OUTBOX_PROCESSING_TIMEOUT_MS: ${OUTBOX_PROCESSING_TIMEOUT_MS}
+    ports:
+      - "${API_PORT}:${PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  email-service:
+    build:
+      context: .
+      args:
+        DATABASE_URL: ${DOCKER_DATABASE_URL}
+        PORT: ${PORT}
+    command: ["node", "dist/email/main.js"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${DOCKER_NODE_ENV}
+      RABBITMQ_URL: ${DOCKER_RABBITMQ_URL}
+      RABBITMQ_RECONNECT_DELAY_MS: ${RABBITMQ_RECONNECT_DELAY_MS}
+      RABBITMQ_CUSTOMERS_EXCHANGE: ${RABBITMQ_CUSTOMERS_EXCHANGE}
+      RABBITMQ_CUSTOMER_CREATED_ROUTING_KEY: ${RABBITMQ_CUSTOMER_CREATED_ROUTING_KEY}
+      RABBITMQ_CUSTOMER_CREATED_QUEUE: ${RABBITMQ_CUSTOMER_CREATED_QUEUE}
+      RABBITMQ_CUSTOMER_CREATED_RETRY_EXCHANGE: ${RABBITMQ_CUSTOMER_CREATED_RETRY_EXCHANGE}
+      RABBITMQ_CUSTOMER_CREATED_RETRY_ROUTING_KEY: ${RABBITMQ_CUSTOMER_CREATED_RETRY_ROUTING_KEY}
+      RABBITMQ_CUSTOMER_CREATED_RETRY_QUEUE: ${RABBITMQ_CUSTOMER_CREATED_RETRY_QUEUE}
+      RABBITMQ_CUSTOMER_CREATED_DLQ_EXCHANGE: ${RABBITMQ_CUSTOMER_CREATED_DLQ_EXCHANGE}
+      RABBITMQ_CUSTOMER_CREATED_DLQ_ROUTING_KEY: ${RABBITMQ_CUSTOMER_CREATED_DLQ_ROUTING_KEY}
+      RABBITMQ_CUSTOMER_CREATED_DLQ_QUEUE: ${RABBITMQ_CUSTOMER_CREATED_DLQ_QUEUE}
+      RABBITMQ_CUSTOMER_CREATED_MAX_RETRIES: ${RABBITMQ_CUSTOMER_CREATED_MAX_RETRIES}
+      RABBITMQ_CUSTOMER_CREATED_RETRY_DELAY_MS: ${RABBITMQ_CUSTOMER_CREATED_RETRY_DELAY_MS}
+      SMTP_HOST: ${DOCKER_SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_FROM: ${SMTP_FROM}
+      EMAIL_FAILURE_SIMULATION_ENABLED: ${EMAIL_FAILURE_SIMULATION_ENABLED:-false}
+      EMAIL_FAILURE_SIMULATION_RATE: ${EMAIL_FAILURE_SIMULATION_RATE:-0}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+
+volumes:
+  postgres_data:

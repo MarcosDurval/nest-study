@@ -1,0 +1,5 @@
+services:
+  email-service:
+    environment:
+      EMAIL_FAILURE_SIMULATION_ENABLED: true
+      EMAIL_FAILURE_SIMULATION_RATE: 0.5
