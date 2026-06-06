@@ -33,7 +33,6 @@ const OUTBOX_EVENT_STATUSES = [
   "failed",
 ] as const;
 
-type OutboxEventStatus = (typeof OUTBOX_EVENT_STATUSES)[number];
 type OutboxPublicationFailureReason =
   | "publish_failed"
   | "unsupported_event_type"
