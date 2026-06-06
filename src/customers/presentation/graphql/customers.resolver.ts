@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { ZodError } from "zod";
+import { CustomerMetrics } from "../../../observability/customer.metrics";
 import { InvalidPaginationError } from "../../../shared/application/pagination";
 import { DomainValidationError } from "../../domain/errors/domain-validation.error";
 import { CustomerConflictError } from "../../application/errors/customer-conflict.error";
@@ -27,6 +28,12 @@ import { UpdateCustomerInput } from "./inputs/update-customer.input";
 import { CustomersPageType } from "./types/customers-page.type";
 import { CustomerType } from "./types/customer.type";
 
+type CustomerCreationFailureReason =
+  | "validation_error"
+  | "conflict"
+  | "domain_error"
+  | "unexpected_error";
+
 @Resolver(() => CustomerType)
 export class CustomersResolver {
   constructor(
@@ -35,6 +42,7 @@ export class CustomersResolver {
     private readonly getCustomerUseCase: GetCustomerUseCase,
     private readonly updateCustomerUseCase: UpdateCustomerUseCase,
     private readonly deleteCustomerUseCase: DeleteCustomerUseCase,
+    private readonly customerMetrics: CustomerMetrics,
   ) {}
 
   @Query(() => CustomersPageType)
@@ -82,11 +90,30 @@ export class CustomersResolver {
   async createCustomer(
     @Args("input") input: CreateCustomerInput,
   ): Promise<CustomerType> {
+    const startedAt = process.hrtime.bigint();
+
     try {
       const data = createCustomerInputSchema.parse(input);
       const customer = await this.createCustomerUseCase.execute(data);
-      return CustomerGraphqlMapper.toType(customer);
+      const result = CustomerGraphqlMapper.toType(customer);
+
+      this.customerMetrics.recordCreation("success", "none");
+      this.customerMetrics.observeCreationDuration(
+        "success",
+        this.durationSecondsSince(startedAt),
+      );
+
+      return result;
     } catch (error) {
+      this.customerMetrics.recordCreation(
+        "failure",
+        this.getCustomerCreationFailureReason(error),
+      );
+      this.customerMetrics.observeCreationDuration(
+        "failure",
+        this.durationSecondsSince(startedAt),
+      );
+
       this.handleError(error);
     }
   }
@@ -145,5 +172,27 @@ export class CustomersResolver {
     }
 
     throw error;
+  }
+
+  private getCustomerCreationFailureReason(
+    error: unknown,
+  ): CustomerCreationFailureReason {
+    if (error instanceof ZodError) {
+      return "validation_error";
+    }
+
+    if (error instanceof CustomerConflictError) {
+      return "conflict";
+    }
+
+    if (error instanceof DomainValidationError) {
+      return "domain_error";
+    }
+
+    return "unexpected_error";
+  }
+
+  private durationSecondsSince(startedAt: bigint): number {
+    return Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
   }
 }

@@ -1,0 +1,223 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Customers Observability
+    folder: Customers
+    interval: 1m
+    rules:
+      - uid: customers-email-dlq-not-empty
+        title: Email DLQ is not empty
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              instant: true
+              expr: sum(rabbitmq_queue_messages_ready{queue="email.customer-created.dlq"})
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Email customer.created DLQ has messages.
+
+      - uid: customers-outbox-failed-events
+        title: Outbox has failed events
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              instant: true
+              expr: sum(customers_outbox_events{status="failed"})
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Outbox has failed events.
+
+      - uid: customers-outbox-old-pending
+        title: Oldest pending outbox event is stale
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              instant: true
+              expr: customers_outbox_oldest_pending_age_seconds
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                  evaluator:
+                    type: gt
+                    params: [120]
+                  operator:
+                    type: and
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Oldest pending outbox event is older than 2 minutes.
+
+      - uid: customers-api-scrape-down
+        title: API scrape is down
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              instant: true
+              expr: up{job="api"}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                  evaluator:
+                    type: lt
+                    params: [1]
+                  operator:
+                    type: and
+        for: 1m
+        noDataState: Alerting
+        execErrState: Error
+        annotations:
+          summary: Prometheus cannot scrape the API.
+
+      - uid: customers-email-service-scrape-down
+        title: Email service scrape is down
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              instant: true
+              expr: up{job="email-service"}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                  evaluator:
+                    type: lt
+                    params: [1]
+                  operator:
+                    type: and
+        for: 1m
+        noDataState: Alerting
+        execErrState: Error
+        annotations:
+          summary: Prometheus cannot scrape the email service.
+
+      - uid: email-failures-exceed-successes
+        title: Email failures exceed successes
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              instant: true
+              expr: sum(rate(customers_welcome_email_delivery_total{outcome="failure"}[5m])) - sum(rate(customers_welcome_email_delivery_total{outcome="success"}[5m]))
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  query:
+                    params: [C]
+                  reducer:
+                    type: last
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Welcome Email Delivery failures exceed successes.

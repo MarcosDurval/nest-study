@@ -4,6 +4,7 @@ import * as amqp from "amqplib";
 import { ConsumeMessage } from "amqplib";
 import { CustomerCreatedEmailConsumer } from "../src/email/customer-created-email.consumer";
 import { CustomerWelcomeEmailSender } from "../src/email/customer-welcome-email.sender";
+import { EmailMetrics } from "../src/observability/email.metrics";
 
 jest.mock("amqplib", () => ({
   connect: jest.fn(),
@@ -14,6 +15,7 @@ describe("CustomerCreatedEmailConsumer", () => {
   let connection: jest.Mocked<amqp.ChannelModel>;
   let consumeHandler: ((message: ConsumeMessage | null) => unknown) | undefined;
   let emailSender: jest.Mocked<CustomerWelcomeEmailSender>;
+  let emailMetrics: jest.Mocked<EmailMetrics>;
 
   beforeEach(() => {
     jest.spyOn(Logger.prototype, "error").mockImplementation();
@@ -53,6 +55,12 @@ describe("CustomerCreatedEmailConsumer", () => {
     emailSender = {
       send: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<CustomerWelcomeEmailSender>;
+    emailMetrics = {
+      recordDelivery: jest.fn(),
+      observeDeliveryDuration: jest.fn(),
+      recordRetry: jest.fn(),
+      recordDlq: jest.fn(),
+    } as unknown as jest.Mocked<EmailMetrics>;
   });
 
   afterEach(() => {
@@ -123,6 +131,11 @@ describe("CustomerCreatedEmailConsumer", () => {
     expect(emailSender.send).toHaveBeenCalledWith(validEvent());
     expect(channel.ack).toHaveBeenCalledWith(message);
     expect(channel.publish).not.toHaveBeenCalled();
+    expect(emailMetrics.recordDelivery).toHaveBeenCalledWith("success", "none");
+    expect(emailMetrics.observeDeliveryDuration).toHaveBeenCalledWith(
+      "success",
+      expect.any(Number),
+    );
   });
 
   it("publishes transient failures to the retry exchange", async () => {
@@ -147,6 +160,15 @@ describe("CustomerCreatedEmailConsumer", () => {
       expect.any(Function),
     );
     expect(channel.ack).toHaveBeenCalledWith(message);
+    expect(emailMetrics.recordDelivery).toHaveBeenCalledWith(
+      "failure",
+      "send_failed",
+    );
+    expect(emailMetrics.observeDeliveryDuration).toHaveBeenCalledWith(
+      "failure",
+      expect.any(Number),
+    );
+    expect(emailMetrics.recordRetry).toHaveBeenCalledWith("send_failed");
   });
 
   it("publishes exhausted failures to the DLQ", async () => {
@@ -170,6 +192,11 @@ describe("CustomerCreatedEmailConsumer", () => {
       expect.any(Function),
     );
     expect(channel.ack).toHaveBeenCalledWith(message);
+    expect(emailMetrics.recordDelivery).toHaveBeenCalledWith(
+      "failure",
+      "send_failed",
+    );
+    expect(emailMetrics.recordDlq).toHaveBeenCalledWith("retries_exhausted");
   });
 
   it("publishes invalid payloads to the DLQ without sending email", async () => {
@@ -192,6 +219,15 @@ describe("CustomerCreatedEmailConsumer", () => {
       expect.any(Function),
     );
     expect(channel.ack).toHaveBeenCalledWith(message);
+    expect(emailMetrics.recordDelivery).toHaveBeenCalledWith(
+      "failure",
+      "invalid_payload",
+    );
+    expect(emailMetrics.observeDeliveryDuration).toHaveBeenCalledWith(
+      "failure",
+      expect.any(Number),
+    );
+    expect(emailMetrics.recordDlq).toHaveBeenCalledWith("invalid_payload");
   });
 
   function makeConsumer(
@@ -226,7 +262,11 @@ describe("CustomerCreatedEmailConsumer", () => {
       }),
     } as unknown as ConfigService;
 
-    return new CustomerCreatedEmailConsumer(config, emailSender);
+    return new (CustomerCreatedEmailConsumer as unknown as new (
+      config: ConfigService,
+      emailSender: CustomerWelcomeEmailSender,
+      emailMetrics: EmailMetrics,
+    ) => CustomerCreatedEmailConsumer)(config, emailSender, emailMetrics);
   }
 
   async function handle(message: ConsumeMessage): Promise<void> {

@@ -7,7 +7,9 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
+import { ZodError } from "zod";
 import { PrismaService } from "../../../database/prisma.service";
+import { OutboxMetrics } from "../../../observability/outbox.metrics";
 import {
   CUSTOMER_CREATED_EVENT_TYPE,
   customerCreatedEventSchema,
@@ -23,6 +25,25 @@ type ClaimedOutboxEvent = {
   payload: Prisma.JsonValue;
   attempts: number;
 };
+
+const OUTBOX_EVENT_STATUSES = [
+  "pending",
+  "processing",
+  "published",
+  "failed",
+] as const;
+
+type OutboxPublicationFailureReason =
+  | "publish_failed"
+  | "unsupported_event_type"
+  | "invalid_payload";
+
+class UnsupportedOutboxEventTypeError extends Error {
+  constructor(eventType: string) {
+    super(`Unsupported outbox event type: ${eventType}`);
+    this.name = "UnsupportedOutboxEventTypeError";
+  }
+}
 
 @Injectable()
 export class CustomerCreatedOutboxPublisher
@@ -43,6 +64,7 @@ export class CustomerCreatedOutboxPublisher
     private readonly config: ConfigService,
     @Inject(CUSTOMER_CREATED_PUBLISHER)
     private readonly publisher: CustomerCreatedPublisher,
+    private readonly outboxMetrics: OutboxMetrics,
   ) {
     this.intervalMs = this.config.getOrThrow<number>(
       "OUTBOX_PUBLISH_INTERVAL_MS",
@@ -70,10 +92,14 @@ export class CustomerCreatedOutboxPublisher
   }
 
   async publishPending(): Promise<void> {
-    const events = await this.claimPendingEvents();
+    try {
+      const events = await this.claimPendingEvents();
 
-    for (const event of events) {
-      await this.publishEvent(event);
+      for (const event of events) {
+        await this.publishEvent(event);
+      }
+    } finally {
+      await this.refreshOutboxBacklogMetrics();
     }
   }
 
@@ -151,16 +177,35 @@ export class CustomerCreatedOutboxPublisher
   }
 
   private async publishEvent(event: ClaimedOutboxEvent): Promise<void> {
+    const startedAt = process.hrtime.bigint();
+
     try {
       if (event.eventType !== CUSTOMER_CREATED_EVENT_TYPE) {
-        throw new Error(`Unsupported outbox event type: ${event.eventType}`);
+        throw new UnsupportedOutboxEventTypeError(event.eventType);
       }
 
       const payload = customerCreatedEventSchema.parse(event.payload);
       await this.publisher.publish(payload, { messageId: event.id });
       await this.markPublished(event.id);
+
+      this.outboxMetrics.recordPublication(event.eventType, "success", "none");
+      this.outboxMetrics.observePublicationDuration(
+        event.eventType,
+        "success",
+        this.durationSecondsSince(startedAt),
+      );
     } catch (error) {
       await this.markFailedAttempt(event, error);
+      this.outboxMetrics.recordPublication(
+        event.eventType,
+        "failure",
+        this.getPublicationFailureReason(error),
+      );
+      this.outboxMetrics.observePublicationDuration(
+        event.eventType,
+        "failure",
+        this.durationSecondsSince(startedAt),
+      );
     }
   }
 
@@ -193,5 +238,64 @@ export class CustomerCreatedOutboxPublisher
         nextAttemptAt: new Date(Date.now() + this.retryDelayMs),
       },
     });
+  }
+
+  private async refreshOutboxBacklogMetrics(): Promise<void> {
+    try {
+      const counts = await this.prisma.outboxEvent.groupBy({
+        by: ["status"],
+        _count: { _all: true },
+      });
+      const countsByStatus = new Map<string, number>(
+        counts.map((count) => [count.status, count._count._all]),
+      );
+
+      for (const status of OUTBOX_EVENT_STATUSES) {
+        this.outboxMetrics.setOutboxEventCount(
+          status,
+          countsByStatus.get(status) ?? 0,
+        );
+      }
+
+      const oldestPending = await this.prisma.outboxEvent.findFirst({
+        where: { status: "pending" },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+      });
+
+      this.outboxMetrics.setOldestPendingAgeSeconds(
+        oldestPending
+          ? Math.max(
+              0,
+              Math.floor(
+                (Date.now() - oldestPending.createdAt.getTime()) / 1000,
+              ),
+            )
+          : 0,
+      );
+    } catch (error) {
+      this.logger.error(
+        "Failed to refresh outbox metrics",
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  private getPublicationFailureReason(
+    error: unknown,
+  ): OutboxPublicationFailureReason {
+    if (error instanceof UnsupportedOutboxEventTypeError) {
+      return "unsupported_event_type";
+    }
+
+    if (error instanceof ZodError) {
+      return "invalid_payload";
+    }
+
+    return "publish_failed";
+  }
+
+  private durationSecondsSince(startedAt: bigint): number {
+    return Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
   }
 }

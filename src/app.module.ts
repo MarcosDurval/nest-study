@@ -6,6 +6,7 @@ import { validateApiEnv } from "./config/env.validation";
 import { CustomersModule } from "./customers/customers.module";
 import { PrismaModule } from "./database/prisma.module";
 import { createGraphqlConfig } from "./graphql.config";
+import { ObservabilityModule } from "./observability/observability.module";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { createGraphqlConfig } from "./graphql.config";
       useFactory: (config: ConfigService) =>
         createGraphqlConfig(config.getOrThrow<string>("NODE_ENV")),
     }),
+    ObservabilityModule,
     PrismaModule,
     CustomersModule,
   ],

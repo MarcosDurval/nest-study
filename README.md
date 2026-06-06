@@ -7,10 +7,36 @@ API de clientes em NestJS com DDD, GraphQL, Prisma/PostgreSQL, RabbitMQ e um wor
 As URLs abaixo usam os valores padrão do `.env.example`.
 
 - API: http://localhost:3000/graphql
+- API health: http://localhost:3000/health
+- API metrics: http://localhost:3000/metrics
 - Serviço de e-mail: worker em background que consome mensagens do RabbitMQ
+- Serviço de e-mail health: http://localhost:3001/health
+- Serviço de e-mail metrics: http://localhost:3001/metrics
 - RabbitMQ UI: http://localhost:15672 (`guest` / `guest`)
+- RabbitMQ metrics: http://localhost:15692/metrics
 - MailHog UI: http://localhost:8025
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3002 (`admin` / `admin`)
 - PostgreSQL 18: `localhost:5432`
+
+## Pré-requisitos
+
+- Node.js 20 ou superior
+- npm
+- Docker Engine
+- Docker Compose v2+ pelo comando `docker compose`
+
+Este projeto foi testado com Docker 29.0.0 e Docker Compose v5.1.4. O binário
+legado `docker-compose` v1 não é usado nos comandos deste README.
+
+Para conferir o ambiente local:
+
+```bash
+node --version
+npm --version
+docker --version
+docker compose version
+```
 
 ## Arquitetura
 
@@ -21,30 +47,44 @@ As URLs abaixo usam os valores padrão do `.env.example`.
 - `rabbitmq`: broker com topic exchange entre a API e o serviço de e-mail.
 - `mailhog`: SMTP local para capturar e inspecionar os e-mails enviados.
 
+### Cadastro
+
 ```mermaid
-flowchart LR
-  client["Cliente GraphQL"] --> api["api<br/>NestJS + GraphQL"]
-  api --> customers["CustomersModule<br/>use cases + domínio"]
-  customers --> prisma["Prisma"]
-  prisma --> postgres[("PostgreSQL 18")]
-  prisma --> outbox[("outbox_events")]
+graph TD;
+    A[Cliente GraphQL]-->B[api - NestJS GraphQL];
+    B-->C[CreateCustomerUseCase];
+    C-->D[Prisma transaction];
+    D-->E[Customer table];
+    D-->F[outbox_events - customer.created];
+```
 
-  outbox --> outboxPublisher["CustomerCreatedOutboxPublisher"]
-  outboxPublisher --> publisher["RabbitMqCustomerCreatedPublisher<br/>ConfirmChannel"]
-  publisher --> exchange{"customers.exchange<br/>topic"}
-  exchange --> mainQueue["email.customer-created"]
+### Envio
 
-  mainQueue --> worker["email-service<br/>CustomerCreatedEmailConsumer"]
-  worker --> sender["CustomerWelcomeEmailSender"]
-  sender --> mailhog["MailHog SMTP"]
-  mailhog --> mailhogUi["MailHog UI"]
+```mermaid
+graph TD;
+    A[outbox_events pending]-->B[Outbox Publisher];
+    B-->C[RabbitMQ Publisher];
+    C-->D[customers.exchange];
+    D-->E[email.customer-created];
+    E-->F[email-service - Email Consumer];
+    F-->G[Welcome Email Sender];
+    G-->H[MailHog SMTP];
+    H-->I[MailHog UI];
+```
 
-  worker -- "falha transitória" --> retryExchange{"customers.retry.exchange"}
-  retryExchange --> retryQueue["email.customer-created.retry<br/>TTL"]
-  retryQueue -- "TTL expirou" --> exchange
+### Retry e DLQ
 
-  worker -- "payload inválido ou tentativas esgotadas" --> dlx{"customers.dlx"}
-  dlx --> dlq["email.customer-created.dlq"]
+```mermaid
+graph TD;
+    A[email-service - Email Consumer]-->B[falha transitoria];
+    B-->C[customers.retry.exchange];
+    C-->D[email.customer-created.retry - TTL];
+    D-->E[TTL expirou];
+    E-->F[customers.exchange];
+    F-->G[email.customer-created];
+    A-->H[payload invalido ou tentativas esgotadas];
+    H-->I[customers.dlx];
+    I-->J[email.customer-created.dlq];
 ```
 
 ## Arquivo de ambiente
@@ -61,6 +101,10 @@ Ajuste o `.env` quando portas, credenciais ou endereços de serviços forem
 diferentes dos valores padrão.
 
 ## Execução local
+
+Mesmo na execução local, os serviços de infraestrutura rodam em containers.
+Nesse modo, PostgreSQL, RabbitMQ e MailHog rodam com Docker Compose, enquanto a
+API e o serviço de e-mail rodam diretamente no host com `npm`.
 
 ```bash
 npm install
@@ -80,13 +124,16 @@ npm run start:email
 
 ## Execução com Docker
 
-É necessário ter Docker e Docker Compose instalados.
-
 Para subir a stack completa em background usando o `Dockerfile` de produção:
 
 ```bash
 docker compose up --build -d
 ```
+
+A stack completa também sobe Prometheus e Grafana. O Prometheus coleta
+métricas da API, do worker de e-mail e do RabbitMQ; o Grafana provisiona o
+dashboard `Customers Observability` e alertas locais a partir dos arquivos em
+`docker/grafana`.
 
 Para subir a stack em modo de desenvolvimento, com a API usando
 `Dockerfile.dev`, `npm run start:dev` e o código-fonte montado no container:
@@ -156,6 +203,12 @@ então cada processo exige apenas os valores que realmente usa.
 - Variáveis de porta como `API_PORT`, `POSTGRES_PORT` e
   `RABBITMQ_MANAGEMENT_PORT` controlam as portas expostas no host pelo Docker
   Compose.
+- `OBSERVABILITY_PORT` controla o servidor HTTP de health e métricas do
+  worker de e-mail.
+- `PROMETHEUS_PORT`, `GRAFANA_PORT` e `RABBITMQ_PROMETHEUS_PORT` controlam as
+  portas de observabilidade expostas no host.
+- `GRAFANA_ADMIN_USER` e `GRAFANA_ADMIN_PASSWORD` controlam o acesso local ao
+  Grafana.
 - `OUTBOX_PUBLISH_INTERVAL_MS`, `OUTBOX_PUBLISH_BATCH_SIZE`,
   `OUTBOX_RETRY_DELAY_MS`, `OUTBOX_MAX_ATTEMPTS` e
   `OUTBOX_PROCESSING_TIMEOUT_MS` controlam o publisher de eventos pendentes da
@@ -163,6 +216,10 @@ então cada processo exige apenas os valores que realmente usa.
 - `EMAIL_FAILURE_SIMULATION_ENABLED` e `EMAIL_FAILURE_SIMULATION_RATE`
   controlam a simulação de falha no envio de e-mail. Por padrão a simulação
   fica desligada.
+
+Os endpoints `/metrics` foram pensados para o ambiente local de estudo e para
+scrape interno do Prometheus. Não exponha esses endpoints publicamente sem uma
+camada explícita de rede/autenticação.
 
 Os testes não exigem um arquivo `.env.test` dedicado. Testes unitários devem
 fornecer seus próprios fixtures ou mocks de configuração, sem depender da

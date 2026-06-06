@@ -41,6 +41,7 @@ describe("env validation", () => {
       SMTP_PORT: "1025",
       SMTP_SECURE: "false",
       SMTP_FROM: "Customers App <no-reply@customers.local>",
+      OBSERVABILITY_PORT: "3001",
       EMAIL_FAILURE_SIMULATION_ENABLED: "true",
       EMAIL_FAILURE_SIMULATION_RATE: "0.5",
     });
@@ -48,6 +49,7 @@ describe("env validation", () => {
     expect(env.RABBITMQ_CUSTOMER_CREATED_MAX_RETRIES).toBe(3);
     expect(env.SMTP_PORT).toBe(1025);
     expect(env.SMTP_SECURE).toBe(false);
+    expect(env.OBSERVABILITY_PORT).toBe(3001);
     expect(env.EMAIL_FAILURE_SIMULATION_ENABLED).toBe(true);
     expect(env.EMAIL_FAILURE_SIMULATION_RATE).toBe(0.5);
   });

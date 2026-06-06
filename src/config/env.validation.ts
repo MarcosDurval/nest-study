@@ -26,6 +26,7 @@ const booleanFromEnv = z.preprocess((value) => {
 const nodeEnv = z.enum(["development", "test", "production"]);
 const failureSimulationEnabled = booleanFromEnv.default(false);
 const failureSimulationRate = probabilityRate.default(0);
+const observabilityPort = positiveInteger.default(3001);
 
 const rabbitPublisherEnv = {
   RABBITMQ_URL: requiredString,
@@ -62,6 +63,7 @@ export const emailEnvSchema = z.object({
   SMTP_PORT: positiveInteger,
   SMTP_SECURE: booleanFromEnv,
   SMTP_FROM: requiredString,
+  OBSERVABILITY_PORT: observabilityPort,
   EMAIL_FAILURE_SIMULATION_ENABLED: failureSimulationEnabled,
   EMAIL_FAILURE_SIMULATION_RATE: failureSimulationRate,
 });

@@ -6,7 +6,7 @@ API_URL="${API_URL:-http://localhost:3000/graphql}"
 TOTAL="${TOTAL:-300}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d%H%M%S)}"
 CPF_SEED="${CPF_SEED:-$(date +%s)}"
-SLEEP_SECONDS="${SLEEP_SECONDS:-2}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-1}"
 
 if ! [[ "$TOTAL" =~ ^[0-9]+$ ]] || [ "$TOTAL" -lt 1 ]; then
   echo "TOTAL must be a positive integer." >&2
@@ -105,7 +105,7 @@ JSON
     rm -f "$response_file"
     echo "[$index/$TOTAL] Failed to call $API_URL for $email" >&2
     echo "$response" >&2
-    exit 1
+    return 1
   fi
 
   response="$(cat "$response_file")"
@@ -114,28 +114,36 @@ JSON
   if [[ "$http_code" != 2* ]]; then
     echo "[$index/$TOTAL] HTTP $http_code for $email" >&2
     echo "$response" >&2
-    exit 1
+    return 1
   fi
 
   if [[ "$response" == *'"errors"'* ]]; then
     echo "[$index/$TOTAL] GraphQL error for $email" >&2
     echo "$response" >&2
-    exit 1
+    return 1
   fi
 
   echo "[$index/$TOTAL] created $email"
+  return 0
 }
 
 echo "Creating $TOTAL customers at $API_URL"
 echo "RUN_ID=$RUN_ID CPF_SEED=$CPF_SEED"
 
+created=0
+failed=0
+
 for index in $(seq 1 "$TOTAL"); do
   cpf="$(generate_cpf "$index")"
-  post_customer "$index" "$cpf"
+  if post_customer "$index" "$cpf"; then
+    created=$((created + 1))
+  else
+    failed=$((failed + 1))
+  fi
 
   if [ "$SLEEP_SECONDS" != "0" ]; then
     sleep "$SLEEP_SECONDS"
   fi
 done
 
-echo "Finished creating $TOTAL customers."
+echo "Finished customer creation load. created=$created failed=$failed total=$TOTAL"
