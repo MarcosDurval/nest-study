@@ -19,6 +19,25 @@ As URLs abaixo usam os valores padrão do `.env.example`.
 - Grafana: http://localhost:3002 (`admin` / `admin`)
 - PostgreSQL 18: `localhost:5432`
 
+## Pré-requisitos
+
+- Node.js 20 ou superior
+- npm
+- Docker Engine
+- Docker Compose v2+ pelo comando `docker compose`
+
+Este projeto foi testado com Docker 29.0.0 e Docker Compose v5.1.4. O binário
+legado `docker-compose` v1 não é usado nos comandos deste README.
+
+Para conferir o ambiente local:
+
+```bash
+node --version
+npm --version
+docker --version
+docker compose version
+```
+
 ## Arquitetura
 
 - `api`: API GraphQL responsável pelo domínio de clientes, persistência dos clientes e gravação do evento `customer.created` na outbox.
@@ -83,6 +102,10 @@ diferentes dos valores padrão.
 
 ## Execução local
 
+Mesmo na execução local, os serviços de infraestrutura rodam em containers.
+Nesse modo, PostgreSQL, RabbitMQ e MailHog rodam com Docker Compose, enquanto a
+API e o serviço de e-mail rodam diretamente no host com `npm`.
+
 ```bash
 npm install
 npm run prisma:generate
@@ -100,8 +123,6 @@ npm run start:email
 ```
 
 ## Execução com Docker
-
-É necessário ter Docker e Docker Compose instalados.
 
 Para subir a stack completa em background usando o `Dockerfile` de produção:
 
