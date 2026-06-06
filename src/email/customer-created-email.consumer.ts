@@ -11,6 +11,7 @@ import {
   customerCreatedEventSchema,
   CustomerCreatedEvent,
 } from "../shared/events/customer-created.event";
+import { EmailMetrics } from "../observability/email.metrics";
 import { CustomerWelcomeEmailSender } from "./customer-welcome-email.sender";
 
 type AmqpConnection = Awaited<ReturnType<typeof amqp.connect>>;
@@ -47,6 +48,7 @@ export class CustomerCreatedEmailConsumer
   constructor(
     private readonly config: ConfigService,
     private readonly emailSender: CustomerWelcomeEmailSender,
+    private readonly emailMetrics: EmailMetrics,
   ) {
     this.rabbitUrl = this.config.getOrThrow<string>("RABBITMQ_URL");
     this.reconnectDelayMs = this.config.getOrThrow<number>(
@@ -237,9 +239,16 @@ export class CustomerCreatedEmailConsumer
       throw new Error("RabbitMQ channel is not initialized");
     }
 
+    const startedAt = process.hrtime.bigint();
+
     try {
       const event = this.parseEvent(message);
       await this.emailSender.send(event);
+      this.emailMetrics.recordDelivery("success", "none");
+      this.emailMetrics.observeDeliveryDuration(
+        "success",
+        this.durationSecondsSince(startedAt),
+      );
       this.channel.ack(message);
     } catch (error) {
       if (error instanceof SyntaxError || error instanceof ZodError) {
@@ -247,15 +256,26 @@ export class CustomerCreatedEmailConsumer
           "Invalid customer.created payload. Sending message to DLQ.",
           error instanceof Error ? error.stack : undefined,
         );
+        this.emailMetrics.recordDelivery("failure", "invalid_payload");
+        this.emailMetrics.observeDeliveryDuration(
+          "failure",
+          this.durationSecondsSince(startedAt),
+        );
         await this.publishToDeadLetter(
           message,
           this.getRetryCount(message),
           error,
         );
+        this.emailMetrics.recordDlq("invalid_payload");
         this.channel.ack(message);
         return;
       }
 
+      this.emailMetrics.recordDelivery("failure", "send_failed");
+      this.emailMetrics.observeDeliveryDuration(
+        "failure",
+        this.durationSecondsSince(startedAt),
+      );
       await this.retryOrDeadLetter(message, error);
     }
   }
@@ -282,8 +302,10 @@ export class CustomerCreatedEmailConsumer
 
     if (retryCount >= this.maxRetries) {
       await this.publishToDeadLetter(message, retryCount, error);
+      this.emailMetrics.recordDlq("retries_exhausted");
     } else {
       await this.publishToRetry(message, retryCount);
+      this.emailMetrics.recordRetry("send_failed");
     }
 
     this.channel.ack(message);
@@ -372,5 +394,9 @@ export class CustomerCreatedEmailConsumer
         },
       );
     });
+  }
+
+  private durationSecondsSince(startedAt: bigint): number {
+    return Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
   }
 }
