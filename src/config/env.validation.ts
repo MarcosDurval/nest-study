@@ -43,6 +43,7 @@ export const apiEnvSchema = z.object({
   OUTBOX_RETRY_DELAY_MS: positiveInteger,
   OUTBOX_MAX_ATTEMPTS: positiveInteger,
   OUTBOX_PROCESSING_TIMEOUT_MS: positiveInteger,
+  OUTBOX_PUBLISHER_ENABLED: booleanFromEnv.default(true),
 });
 
 export const emailEnvSchema = z.object({

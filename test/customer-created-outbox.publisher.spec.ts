@@ -156,6 +156,9 @@ describe("CustomerCreatedOutboxPublisher", () => {
       ...overrides,
     };
     const config = {
+      get: jest.fn((key: string, defaultValue?: unknown) =>
+        values[key] ?? defaultValue,
+      ),
       getOrThrow: jest.fn((key: string) => values[key]),
     } as unknown as ConfigService;
 

@@ -34,6 +34,7 @@ export class CustomerCreatedOutboxPublisher
   private readonly retryDelayMs: number;
   private readonly maxAttempts: number;
   private readonly processingTimeoutMs: number;
+  private readonly enabled: boolean;
   private timer?: NodeJS.Timeout;
   private isRunning = false;
   private isShuttingDown = false;
@@ -55,9 +56,15 @@ export class CustomerCreatedOutboxPublisher
     this.processingTimeoutMs = this.config.getOrThrow<number>(
       "OUTBOX_PROCESSING_TIMEOUT_MS",
     );
+    this.enabled = this.config.get<boolean>("OUTBOX_PUBLISHER_ENABLED", true);
   }
 
   onModuleInit(): void {
+    if (!this.enabled) {
+      this.logger.log("Transactional outbox polling publisher is disabled");
+      return;
+    }
+
     this.scheduleNextRun(0);
   }
 

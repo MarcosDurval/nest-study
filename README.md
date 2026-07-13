@@ -16,7 +16,8 @@ As URLs abaixo usam os valores padrão do `.env.example`.
 
 - `api`: API GraphQL responsável pelo domínio de clientes, persistência dos clientes e gravação do evento `customer.created` na outbox.
 - `outbox_events`: tabela no PostgreSQL que guarda eventos pendentes de publicação.
-- `CustomerCreatedOutboxPublisher`: publisher em background que publica eventos pendentes da outbox no RabbitMQ.
+- `debezium`: CDC sobre o WAL do PostgreSQL que captura inserts em `outbox_events` e publica o payload no RabbitMQ.
+- `CustomerCreatedOutboxPublisher`: publisher em background que publica eventos pendentes da outbox no RabbitMQ quando o CDC está desativado.
 - `email-service`: processo NestJS separado que consome `customer.created` do RabbitMQ e envia o e-mail de boas-vindas via SMTP.
 - `rabbitmq`: broker com topic exchange entre a API e o serviço de e-mail.
 - `mailhog`: SMTP local para capturar e inspecionar os e-mails enviados.
@@ -29,7 +30,9 @@ flowchart LR
   prisma --> postgres[("PostgreSQL 18")]
   prisma --> outbox[("outbox_events")]
 
-  outbox --> outboxPublisher["CustomerCreatedOutboxPublisher"]
+  outbox --> debezium["Debezium Server<br/>PostgreSQL CDC"]
+  outbox --> outboxPublisher["CustomerCreatedOutboxPublisher<br/>fallback sem CDC"]
+  debezium --> exchange
   outboxPublisher --> publisher["RabbitMqCustomerCreatedPublisher<br/>ConfirmChannel"]
   publisher --> exchange{"customers.exchange<br/>topic"}
   exchange --> mainQueue["email.customer-created"]
@@ -160,6 +163,12 @@ então cada processo exige apenas os valores que realmente usa.
   `OUTBOX_RETRY_DELAY_MS`, `OUTBOX_MAX_ATTEMPTS` e
   `OUTBOX_PROCESSING_TIMEOUT_MS` controlam o publisher de eventos pendentes da
   outbox.
+- `OUTBOX_PUBLISHER_ENABLED` liga o publisher polling da aplicação. Na execução
+  local o padrão é `true`; no Docker Compose, `DOCKER_OUTBOX_PUBLISHER_ENABLED`
+  é usado para desligar esse publisher e deixar o Debezium publicar via CDC.
+- O Debezium usa `snapshot.mode=no_data`, então ele não republica linhas antigas
+  da outbox ao iniciar; ele captura apenas novos inserts depois que o conector
+  está ativo.
 - `EMAIL_FAILURE_SIMULATION_ENABLED` e `EMAIL_FAILURE_SIMULATION_RATE`
   controlam a simulação de falha no envio de e-mail. Por padrão a simulação
   fica desligada.
@@ -250,10 +259,13 @@ mutation {
 ```
 
 Ao criar um cliente, a API persiste `Customer` e `Address` e grava
-`customer.created` na tabela `outbox_events` na mesma transação. O publisher da
-outbox publica o evento em `customers.exchange` com confirmação do RabbitMQ, e o
-`email-service` separado consome a mensagem pela fila `email.customer-created`
-para enviar um e-mail de boas-vindas pelo MailHog.
+`customer.created` na tabela `outbox_events` na mesma transação. No Docker
+Compose, o Debezium Server captura o insert nessa tabela via CDC e publica o
+payload no exchange `customers.exchange` com routing key `customer.created`.
+Quando `OUTBOX_PUBLISHER_ENABLED=true`, o publisher polling da aplicação pode
+fazer essa publicação sem Debezium. O `email-service` separado consome a
+mensagem pela fila `email.customer-created` para enviar um e-mail de
+boas-vindas pelo MailHog.
 
 Os IDs são gerados pelo PostgreSQL 18 com UUIDv7 nativo via
 `DEFAULT uuidv7()`.

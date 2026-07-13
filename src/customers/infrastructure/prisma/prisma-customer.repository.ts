@@ -56,6 +56,8 @@ export class PrismaCustomerRepository implements CustomerRepository {
         await transaction.outboxEvent.create({
           data: {
             eventType: CUSTOMER_CREATED_EVENT_TYPE,
+            aggregateType: "customer",
+            aggregateId: createdCustomer.id,
             payload: {
               customerId: createdCustomer.id,
               name: createdCustomer.name,

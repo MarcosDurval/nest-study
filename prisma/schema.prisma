@@ -35,6 +35,8 @@ model Address {
 model OutboxEvent {
   id            String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   eventType     String    @map("event_type")
+  aggregateType String    @map("aggregate_type")
+  aggregateId   String    @map("aggregate_id")
   payload       Json
   status        String    @default("pending")
   attempts      Int       @default(0)
@@ -46,5 +48,6 @@ model OutboxEvent {
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   @@index([status, nextAttemptAt])
+  @@index([aggregateType, aggregateId])
   @@map("outbox_events")
 }
