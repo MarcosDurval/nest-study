@@ -3,6 +3,8 @@ import {
   CreateCustomerUseCaseInput,
   UpdateCustomerUseCaseInput,
 } from "../../application/dtos/customer-use-case.dto";
+import { InputValidator } from "../../../shared/application/validation";
+import { ZodInputValidator } from "../../../shared/presentation/validation/zod-input-validator";
 
 const requiredString = (field: string) =>
   z.string().trim().min(1, `${field} is required`);
@@ -51,7 +53,7 @@ const updateAddressSchema = z
   })
   .strict();
 
-export const createCustomerInputSchema = z
+const createCustomerInputSchema = z
   .object({
     name: requiredString("name"),
     email: emailSchema,
@@ -61,7 +63,7 @@ export const createCustomerInputSchema = z
   })
   .strict() satisfies z.ZodType<CreateCustomerUseCaseInput>;
 
-export const updateCustomerInputSchema = z
+const updateCustomerInputSchema = z
   .object({
     name: optionalString("name"),
     email: emailSchema.optional(),
@@ -70,3 +72,9 @@ export const updateCustomerInputSchema = z
     address: updateAddressSchema.optional(),
   })
   .strict() satisfies z.ZodType<UpdateCustomerUseCaseInput>;
+
+export const createCustomerInputValidator: InputValidator<CreateCustomerUseCaseInput> =
+  new ZodInputValidator(createCustomerInputSchema);
+
+export const updateCustomerInputValidator: InputValidator<UpdateCustomerUseCaseInput> =
+  new ZodInputValidator(updateCustomerInputSchema);

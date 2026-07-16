@@ -4,8 +4,8 @@ import {
   ConflictException,
   NotFoundException,
 } from "@nestjs/common";
-import { ZodError } from "zod";
 import { InvalidPaginationError } from "../../../shared/application/pagination";
+import { InputValidationError } from "../../../shared/application/validation";
 import { DomainValidationError } from "../../domain/errors/domain-validation.error";
 import { CustomerConflictError } from "../../application/errors/customer-conflict.error";
 import { CustomerNotFoundError } from "../../application/errors/customer-not-found.error";
@@ -19,9 +19,9 @@ import {
 import { CustomerGraphqlMapper } from "./customer-graphql.mapper";
 import { CustomerListOrderBy, SortDirection } from "./customer-list-order.enum";
 import {
-  createCustomerInputSchema,
-  updateCustomerInputSchema,
-} from "./customer-input.schemas";
+  createCustomerInputValidator,
+  updateCustomerInputValidator,
+} from "./customer-input.validators";
 import { CreateCustomerInput } from "./inputs/create-customer.input";
 import { UpdateCustomerInput } from "./inputs/update-customer.input";
 import { CustomersPageType } from "./types/customers-page.type";
@@ -83,7 +83,7 @@ export class CustomersResolver {
     @Args("input") input: CreateCustomerInput,
   ): Promise<CustomerType> {
     try {
-      const data = createCustomerInputSchema.parse(input);
+      const data = createCustomerInputValidator.validate(input);
       const customer = await this.createCustomerUseCase.execute(data);
       return CustomerGraphqlMapper.toType(customer);
     } catch (error) {
@@ -97,7 +97,7 @@ export class CustomersResolver {
     @Args("input") input: UpdateCustomerInput,
   ): Promise<CustomerType> {
     try {
-      const data = updateCustomerInputSchema.parse(input);
+      const data = updateCustomerInputValidator.validate(input);
       const customer = await this.updateCustomerUseCase.execute(id, data);
       return CustomerGraphqlMapper.toType(customer);
     } catch (error) {
@@ -118,13 +118,10 @@ export class CustomersResolver {
   }
 
   private handleError(error: unknown): never {
-    if (error instanceof ZodError) {
+    if (error instanceof InputValidationError) {
       throw new BadRequestException({
-        message: "Validation failed",
-        errors: error.issues.map((issue) => ({
-          path: issue.path.join("."),
-          message: issue.message,
-        })),
+        message: error.message,
+        errors: error.issues,
       });
     }
 

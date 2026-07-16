@@ -1,13 +1,13 @@
-import { ZodError } from "zod";
+import { InputValidationError } from "../src/shared/application/validation";
 import {
-  createCustomerInputSchema,
-  updateCustomerInputSchema,
-} from "../src/customers/presentation/graphql/customer-input.schemas";
+  createCustomerInputValidator,
+  updateCustomerInputValidator,
+} from "../src/customers/presentation/graphql/customer-input.validators";
 import { makeCustomerProps } from "./customer-test.factory";
 
-describe("customer input schemas", () => {
+describe("customer input validators", () => {
   it("normalizes create customer input", () => {
-    const parsed = createCustomerInputSchema.parse({
+    const parsed = createCustomerInputValidator.validate({
       ...makeCustomerProps(),
       name: " Ana Silva ",
       email: " ana@example.com ",
@@ -28,7 +28,7 @@ describe("customer input schemas", () => {
 
   it("rejects invalid create customer input", () => {
     expect(() =>
-      createCustomerInputSchema.parse({
+      createCustomerInputValidator.validate({
         ...makeCustomerProps(),
         name: "",
         email: "invalid",
@@ -37,11 +37,20 @@ describe("customer input schemas", () => {
           state: "pernambuco",
         },
       }),
-    ).toThrow(ZodError);
+    ).toThrow(InputValidationError);
+  });
+
+  it("rejects unknown fields with a library-independent error", () => {
+    expect(() =>
+      createCustomerInputValidator.validate({
+        ...makeCustomerProps(),
+        unknown: true,
+      }),
+    ).toThrow(InputValidationError);
   });
 
   it("normalizes update customer input", () => {
-    const parsed = updateCustomerInputSchema.parse({
+    const parsed = updateCustomerInputValidator.validate({
       name: " Ana Lima ",
       phone: "",
       address: {
